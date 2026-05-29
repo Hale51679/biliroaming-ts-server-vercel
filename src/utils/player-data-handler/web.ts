@@ -73,16 +73,16 @@ export const middleware = async (
   return [...checked_res, JSON.stringify(info)];
 };
 
-const qualityNames: Record<number, string> = {
-  127: '8K 超高清',
-  120: '4K 超高清',
-  116: '1080P 60帧',
-  112: '1080P 高码率',
-  80:  '1080P',
-  74:  '720P 60帧',
-  64:  '720P',
-  32:  '480P',
-  16:  '360P',
+const qualityConfig: Record<number, { name: string }> = {
+  127: { name: '8K 超高清' },
+  120: { name: '4K 超高清' },
+  116: { name: '1080P 60帧' },
+  112: { name: '1080P 高码率' },
+  80:  { name: '1080P' },
+  74:  { name: '720P 60帧' },
+  64:  { name: '720P' },
+  32:  { name: '480P' },
+  16:  { name: '360P' },
 };
 
 function injectQualityParams(urlStr: string): string {
@@ -94,9 +94,24 @@ function injectQualityParams(urlStr: string): string {
   return basePath + '?' + params.toString();
 }
 
-function addMissingQuality(response: any): any {
+/**
+ * 从DASH视频流中补充缺失的画质选项，并伪造大会员状态骗过播放器
+ */
+function patchPlayUrlResponse(response: any): any {
   if (!response || response.code !== 0 || !response.data) return response;
   const data = response.data;
+
+  // 1. 伪造大会员身份，让播放器不弹购买提示
+  if (env.unlock_quality_enabled) {
+    if (data.vip_type === undefined || data.vip_type === 0) {
+      data.vip_type = 2;   // 年度大会员
+    }
+    if (data.vip_status === undefined || data.vip_status === 0) {
+      data.vip_status = 1; // 已开通
+    }
+  }
+
+  // 2. 补充画质列表
   const dashVideo = data?.dash?.video;
   if (!Array.isArray(dashVideo)) return response;
 
@@ -106,9 +121,9 @@ function addMissingQuality(response: any): any {
   let changed = false;
   for (const video of dashVideo) {
     const qId = video.id;
-    if (typeof qId === 'number' && !acceptQuality.includes(qId) && qualityNames[qId]) {
+    if (typeof qId === 'number' && !acceptQuality.includes(qId) && qualityConfig[qId]) {
       acceptQuality.push(qId);
-      acceptDescription.push(qualityNames[qId]);
+      acceptDescription.push(qualityConfig[qId].name);
       changed = true;
     }
   }
@@ -122,6 +137,15 @@ function addMissingQuality(response: any): any {
     data.accept_quality = zipped.map(x => x.q);
     data.accept_description = zipped.map(x => x.desc);
   }
+
+  // 3. 如果用户选的画质在 DASH 里存在但被屏蔽，强制设为最高可用画质
+  if (changed && acceptQuality.length > 0) {
+    const highestVideo = dashVideo.reduce((max, v) => (v.id > max.id ? v : max), dashVideo[0]);
+    if (highestVideo && highestVideo.id > (data.quality || 0)) {
+      data.quality = highestVideo.id;
+    }
+  }
+
   return response;
 }
 
@@ -156,7 +180,7 @@ export const main = async (
       const res = (await fetch(fetchUrl, env.fetch_config_UA).then((res) => res.json())) as any;
       if (res.code === 0) {
         await playerUtil.addNewCache(url_data, res?.result);
-        if (env.unlock_quality_enabled) addMissingQuality(res);
+        if (env.unlock_quality_enabled) patchPlayUrlResponse(res);
       }
       return env.try_unblock_CDN_speed_enabled
         ? JSON.parse(JSON.stringify(res).replace(/bw=[^&]*/g, "bw=1280000"))
@@ -170,7 +194,7 @@ export const main = async (
     }).then((res) => res.json())) as any;
     if (res.code === 0) {
       await playerUtil.addNewCache(url_data, res?.result);
-      if (env.unlock_quality_enabled) addMissingQuality(res);
+      if (env.unlock_quality_enabled) patchPlayUrlResponse(res);
     }
     return env.try_unblock_CDN_speed_enabled
       ? JSON.parse(JSON.stringify(res).replace(/bw=[^&]*/g, "bw=1280000"))

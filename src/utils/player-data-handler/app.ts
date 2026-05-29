@@ -5,16 +5,16 @@ import * as bili from "../_bili";
 import * as playerUtil from "../_player";
 import { IncomingHttpHeaders } from "http";
 
-const qualityNames: Record<number, string> = {
-  127: '8K 超高清',
-  120: '4K 超高清',
-  116: '1080P 60帧',
-  112: '1080P 高码率',
-  80:  '1080P',
-  74:  '720P 60帧',
-  64:  '720P',
-  32:  '480P',
-  16:  '360P',
+const qualityConfig: Record<number, { name: string }> = {
+  127: { name: '8K 超高清' },
+  120: { name: '4K 超高清' },
+  116: { name: '1080P 60帧' },
+  112: { name: '1080P 高码率' },
+  80:  { name: '1080P' },
+  74:  { name: '720P 60帧' },
+  64:  { name: '720P' },
+  32:  { name: '480P' },
+  16:  { name: '360P' },
 };
 
 function injectQualityParams(urlStr: string): string {
@@ -26,9 +26,19 @@ function injectQualityParams(urlStr: string): string {
   return basePath + '?' + params.toString();
 }
 
-function addMissingQuality(response: any): any {
+function patchPlayUrlResponse(response: any): any {
   if (!response || response.code !== 0 || !response.data) return response;
   const data = response.data;
+
+  if (env.unlock_quality_enabled) {
+    if (data.vip_type === undefined || data.vip_type === 0) {
+      data.vip_type = 2;
+    }
+    if (data.vip_status === undefined || data.vip_status === 0) {
+      data.vip_status = 1;
+    }
+  }
+
   const dashVideo = data?.dash?.video;
   if (!Array.isArray(dashVideo)) return response;
 
@@ -38,9 +48,9 @@ function addMissingQuality(response: any): any {
   let changed = false;
   for (const video of dashVideo) {
     const qId = video.id;
-    if (typeof qId === 'number' && !acceptQuality.includes(qId) && qualityNames[qId]) {
+    if (typeof qId === 'number' && !acceptQuality.includes(qId) && qualityConfig[qId]) {
       acceptQuality.push(qId);
-      acceptDescription.push(qualityNames[qId]);
+      acceptDescription.push(qualityConfig[qId].name);
       changed = true;
     }
   }
@@ -54,6 +64,7 @@ function addMissingQuality(response: any): any {
     data.accept_quality = zipped.map(x => x.q);
     data.accept_description = zipped.map(x => x.desc);
   }
+
   return response;
 }
 
@@ -65,7 +76,7 @@ const fetchDataFromBiliAndCache = async (url_data: string) => {
   ).then((res) => res.json())) as any;
   if (res.code === 0) {
     await playerUtil.addNewCache(url_data, res);
-    if (env.unlock_quality_enabled) addMissingQuality(res);
+    if (env.unlock_quality_enabled) patchPlayUrlResponse(res);
   }
   return env.try_unblock_CDN_speed_enabled
     ? JSON.parse(JSON.stringify(res).replace(/bw=[^&]*/g, "bw=1280000"))

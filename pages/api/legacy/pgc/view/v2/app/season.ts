@@ -3,6 +3,28 @@ import * as env from "../../../../../../../src/_config";
 
 const api = env.api.main.app.season_info;
 
+function patchSeasonResponse(body: any): any {
+  if (!body || body.code !== 0 || !body.result) return body;
+  const result = body.result;
+
+  if (result.user_status) {
+    if (env.unlock_quality_enabled) {
+      result.user_status.vip_type = 2;
+      result.user_status.vip_status = 1;
+    }
+  }
+
+  if (result.rights) {
+    if (env.unlock_quality_enabled) {
+      result.rights.can_watch = 1;
+      result.rights.can_download = 1;
+      result.rights.only_vip_download = 0;
+    }
+  }
+
+  return body;
+}
+
 const main = async (req: NextApiRequest, res: NextApiResponse) => {
   fetch(api + req.url, {
     method: req.method,
@@ -19,7 +41,7 @@ const main = async (req: NextApiRequest, res: NextApiResponse) => {
       });
       log.info({});
       log.debug({ context: response });
-      res.json(response);
+      res.json(patchSeasonResponse(response));
     });
 };
 
